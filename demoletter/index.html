@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Retro Ink Letter Split</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #b0b0b0; } /* 底色加深，缝隙更明显 */
+        canvas { display: block; cursor: crosshair; }
+    </style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/d3-delaunay@6"></script>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+let width, height;
+let points = [];
+let chunkOffsets = [];
+
+// 情书内容
+const textContent = "我想，思念大概是有重量的。它在每个安静的深夜里沉下来，压在胸口，让人不得不提笔写下点什么。我们在不同的街道看同一场雨，在不同的时间感受同一种风。窗外的树影摇晃，总让我想起你离开时的那个下午。生活细碎而平凡，但我总想把这些平凡分享给你：今天路边开了一朵淡紫色的小花，午后的咖啡比往常苦了一点，书读到了第两百零三页。这些细小的片段，像碎纸片一样拼凑出我对你的所有记忆。如果文字能有形状，我希望它能跨越距离，落在你手心里。愿你一切都好。";
+
+const gridSize = 30; // 稍微大一点的格子
+const paperColor = "#f4f1ea"; // 复古纸张色
+const gridColor = "#d1dce5"; // 淡淡的水墨灰蓝格线
+const inkColor = "#1A365D";   // 水墨蓝色
+
+function init() {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = width;
+    canvas.height = height;
+
+    // 初始板块点
+    points = [
+        [0, 0], [width, 0], [width, height], [0, height],
+        [width / 2, height / 2]
+    ];
+    generateOffsets();
+    draw();
+}
+
+function generateOffsets() {
+    chunkOffsets = points.map(() => ({
+        x: (Math.random() - 0.5) * 20,
+        y: (Math.random() - 0.5) * 20,
+        rotate: (Math.random() - 0.5) * 0.02
+    }));
+}
+
+function draw() {
+    ctx.clearRect(0, 0, width, height);
+
+    const delaunay = d3.Delaunay.from(points);
+    const voronoi = delaunay.voronoi([0, 0, width, height]);
+
+    // 计算文字布局
+    const charCount = textContent.length;
+    const maxCharsPerLine = 15; // 每行15个字，让它看起来像个方块
+    const totalLines = Math.ceil(charCount / maxCharsPerLine);
+    
+    // 文字块的总宽高
+    const textBlockWidth = maxCharsPerLine * gridSize;
+    const textBlockHeight = totalLines * gridSize;
+
+    // 起始绘制坐标（让文字块居中）
+    const startX = (width - textBlockWidth) / 2;
+    const startY = (height - textBlockHeight) / 2;
+
+    for (let i = 0; i < points.length; i++) {
+        const cell = voronoi.renderCell(i);
+        if (!cell) continue;
+
+        const off = chunkOffsets[i];
+
+        ctx.save();
+        
+        // 板块位移
+        ctx.translate(width/2, height/2);
+        ctx.rotate(off.rotate);
+        ctx.translate(-width/2 + off.x, -height/2 + off.y);
+
+        const path = new Path2D(cell);
+
+        // 1. 纸张底色
+        ctx.fillStyle = paperColor;
+        ctx.fill(path);
+
+        ctx.save();
+        ctx.clip(path);
+        
+        // 2. 绘制草稿纸格子
+        ctx.beginPath();
+        ctx.strokeStyle = gridColor;
+        ctx.lineWidth = 1;
+        // 这里的格子也需要对齐文字
+        for (let x = (width % gridSize)/2; x <= width; x += gridSize) {
+            ctx.moveTo(x, 0); ctx.lineTo(x, height);
+        }
+        for (let y = (height % gridSize)/2; y <= height; y += gridSize) {
+            ctx.moveTo(0, y); ctx.lineTo(width, y);
+        }
+        ctx.stroke();
+
+        // 3. 绘制居中文字
+        ctx.fillStyle = inkColor;
+        // 关键：使用打字机等宽字体
+        ctx.font = `bold 20px "Courier New", "Courier", "PingFang SC", monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        for (let j = 0; j < charCount; j++) {
+            const col = j % maxCharsPerLine;
+            const row = Math.floor(j / maxCharsPerLine);
+
+            const tx = startX + col * gridSize + gridSize / 2;
+            const ty = startY + row * gridSize + gridSize / 2;
+
+            ctx.fillText(textContent[j], tx, ty);
+        }
+        ctx.restore();
+
+        // 4. 边缘细细的红线
+        ctx.strokeStyle = "rgba(220, 20, 60, 0.5)";
+        ctx.lineWidth = 1;
+        ctx.stroke(path);
+
+        ctx.restore();
+    }
+}
+
+canvas.addEventListener('mousedown', (e) => {
+    points.push([e.clientX, e.clientY]);
+    generateOffsets();
+    draw();
+});
+
+window.addEventListener('resize', init);
+init();
+</script>
+</body>
+</html>
