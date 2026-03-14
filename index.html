@@ -2,14 +2,28 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>Retro Ink Letter Split</title>
+    <title>花束般的恋爱 - 绢与麦的信</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #b0b0b0; } /* 底色加深，缝隙更明显 */
-        canvas { display: block; cursor: crosshair; }
+        body { margin: 0; overflow: hidden; background: #0f172a; }
+        #canvas {
+            display: block;
+            cursor: crosshair;
+            background-image: url('https://th.bing.com/th/id/R.5cfafcccd8c51b7a31a376a16d21fa8f?rik=KCraCUhBk8QnEA&riu=http%3a%2f%2fn.sinaimg.cn%2fsinakd20220217ac%2f214%2fw2048h1366%2f20220217%2fff88-b30a5e4e496053aa5a4f3bfc8ae2610c.jpg&ehk=1lP62S2l%2bUpGECS5flPEAYwVf9xcSoARwCsFuLSi%2f1E%3d&risl=&pid=ImgRaw&r=0'); 
+            background-size: cover;
+            background-position: center;
+        }
+        #ui-tip {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            color: rgba(255,255,255,0.7); font-family: "PingFang SC", sans-serif;
+            pointer-events: none; font-size: 12px; letter-spacing: 2px;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.8);
+            background: rgba(0,0,0,0.3); padding: 6px 16px; border-radius: 20px;
+        }
     </style>
 </head>
 <body>
 
+<div id="ui-tip">单击撕开信纸 · 双击重置思念</div>
 <canvas id="canvas"></canvas>
 
 <script src="https://cdn.jsdelivr.net/npm/d3-delaunay@6"></script>
@@ -18,39 +32,103 @@
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
-let width, height;
+let width, height, dpr;
 let points = [];
 let chunkOffsets = [];
+let velocities = []; 
 
-// 情书内容
-const textContent = "我想，思念大概是有重量的。它在每个安静的深夜里沉下来，压在胸口，让人不得不提笔写下点什么。我们在不同的街道看同一场雨，在不同的时间感受同一种风。窗外的树影摇晃，总让我想起你离开时的那个下午。生活细碎而平凡，但我总想把这些平凡分享给你：今天路边开了一朵淡紫色的小花，午后的咖啡比往常苦了一点，书读到了第两百零三页。这些细小的片段，像碎纸片一样拼凑出我对你的所有记忆。如果文字能有形状，我希望它能跨越距离，落在你手心里。愿你一切都好。";
+const textContent = `绢：
 
-const gridSize = 30; // 稍微大一点的格子
-const paperColor = "#f4f1ea"; // 复古纸张色
-const gridColor = "#d1dce5"; // 淡淡的水墨灰蓝格线
-const inkColor = "#1A365D";   // 水墨蓝色
+昨天你睡着的时候，你的睫毛在枕头上投下了一小片阴影。我看了很久，没舍得睡。
+
+上次你问我，是从什么时候开始喜欢你的。我想了很久，其实不是那个我们在酒吧认出彼此的夜晚，也不是在KTV里我笨拙地唱错歌的时候。是在更早，在押井守那个话题之后。你站在路口等红灯，风吹起你的头发，你回过头来看我，眼睛里有一种“终于找到了”的光。那个瞬间，我就知道，我们读同一本书的同一页。
+
+今村夏子的新书我今天买到了。回来的路上我一直在想，要快点拿给你看，但又怕你看得太快——这样我们就少了一件可以一起做的事。
+
+我想和你维持现状。不是什么都不做的维持，是想把我们走过的每一条小路，都再走一遍；把每一个看过的日落，再看一遍。我想和你一直一直这样下去，分享同一副耳机，在同一盏灯下各看各的书，偶尔抬头对视一眼，然后继续低头。
+
+厨房里你昨天买的土豆还放在那里。明天我做奶油炖菜给你吃。
+
+麦`;
+
+// 排版全局变量
+let layoutObj = {
+    lines: [],
+    startX: 0,
+    startY: 0,
+    boxWidth: 0,
+    boxHeight: 0,
+    fontSize: 16,
+    lineHeight: 28
+};
 
 function init() {
+    dpr = window.devicePixelRatio || 1;
     width = window.innerWidth;
     height = window.innerHeight;
-    canvas.width = width;
-    canvas.height = height;
 
-    // 初始板块点
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = width + 'px';
+    canvas.style.height = height + 'px';
+    
+    ctx.scale(dpr, dpr);
+
+    calculateLayout();
+    resetData();
+}
+
+// 核心功能：自动换行与居中排版计算
+function calculateLayout() {
+    // 动态计算字体和阅读区宽度
+    const margin = width > 600 ? 100 : 30; // 屏幕两边的留白
+    const maxBoxWidth = Math.min(width - margin * 2, 600); // 最大阅读宽度为600px
+    
+    layoutObj.fontSize = width > 600 ? 18 : 15;
+    layoutObj.lineHeight = layoutObj.fontSize * 1.8;
+    layoutObj.boxWidth = maxBoxWidth;
+
+    ctx.font = `500 ${layoutObj.fontSize}px "Courier New", "Source Han Serif CN", "Hiragino Mincho Pro", serif`;
+    
+    let wrappedLines = [];
+    const paragraphs = textContent.split('\n');
+
+    // 自动换行算法
+    for (let i = 0; i < paragraphs.length; i++) {
+        let p = paragraphs[i];
+        if (p === '') {
+            wrappedLines.push('');
+            continue;
+        }
+        let currentLine = '';
+        for (let j = 0; j < p.length; j++) {
+            let char = p[j];
+            let testLine = currentLine + char;
+            let metrics = ctx.measureText(testLine);
+            if (metrics.width > maxBoxWidth && j > 0) {
+                wrappedLines.push(currentLine);
+                currentLine = char;
+            } else {
+                currentLine = testLine;
+            }
+        }
+        wrappedLines.push(currentLine);
+    }
+
+    layoutObj.lines = wrappedLines;
+    layoutObj.boxHeight = wrappedLines.length * layoutObj.lineHeight;
+    layoutObj.startX = (width - layoutObj.boxWidth) / 2;
+    layoutObj.startY = (height - layoutObj.boxHeight) / 2;
+}
+
+function resetData() {
+    // 初始点：四角 + 中心，保持初始纸张完整
     points = [
         [0, 0], [width, 0], [width, height], [0, height],
         [width / 2, height / 2]
     ];
-    generateOffsets();
-    draw();
-}
-
-function generateOffsets() {
-    chunkOffsets = points.map(() => ({
-        x: (Math.random() - 0.5) * 20,
-        y: (Math.random() - 0.5) * 20,
-        rotate: (Math.random() - 0.5) * 0.02
-    }));
+    chunkOffsets = points.map(() => ({ x: 0, y: 0, r: 0 }));
+    velocities = points.map(() => ({ vx: 0, vy: 0, vr: 0 }));
 }
 
 function draw() {
@@ -59,89 +137,99 @@ function draw() {
     const delaunay = d3.Delaunay.from(points);
     const voronoi = delaunay.voronoi([0, 0, width, height]);
 
-    // 计算文字布局
-    const charCount = textContent.length;
-    const maxCharsPerLine = 15; // 每行15个字，让它看起来像个方块
-    const totalLines = Math.ceil(charCount / maxCharsPerLine);
-    
-    // 文字块的总宽高
-    const textBlockWidth = maxCharsPerLine * gridSize;
-    const textBlockHeight = totalLines * gridSize;
-
-    // 起始绘制坐标（让文字块居中）
-    const startX = (width - textBlockWidth) / 2;
-    const startY = (height - textBlockHeight) / 2;
-
     for (let i = 0; i < points.length; i++) {
         const cell = voronoi.renderCell(i);
         if (!cell) continue;
 
         const off = chunkOffsets[i];
+        
+        // 物理缓动
+        off.x += velocities[i].vx;
+        off.y += velocities[i].vy;
+        off.r += velocities[i].vr;
+        velocities[i].vx *= 0.98;
+        velocities[i].vy *= 0.98;
+        velocities[i].vr *= 0.98;
 
         ctx.save();
         
-        // 板块位移
-        ctx.translate(width/2, height/2);
-        ctx.rotate(off.rotate);
-        ctx.translate(-width/2 + off.x, -height/2 + off.y);
+        // 围绕屏幕中心进行碎裂变换
+        ctx.translate(width/2 + off.x, height/2 + off.y);
+        ctx.rotate(off.r);
+        ctx.translate(-width/2, -height/2);
 
         const path = new Path2D(cell);
 
         // 1. 纸张底色
-        ctx.fillStyle = paperColor;
+        ctx.shadowColor = "rgba(0,0,0,0.5)";
+        ctx.shadowBlur = 25;
+        ctx.fillStyle = "#faf9f6"; // 偏暖的纸张色
         ctx.fill(path);
+        ctx.shadowBlur = 0;
 
         ctx.save();
         ctx.clip(path);
         
-        // 2. 绘制草稿纸格子
+        // 2. 绘制参考图风格的红色网格线
         ctx.beginPath();
-        ctx.strokeStyle = gridColor;
+        ctx.strokeStyle = "rgba(220, 100, 100, 0.25)"; // 红色网格
         ctx.lineWidth = 1;
-        // 这里的格子也需要对齐文字
-        for (let x = (width % gridSize)/2; x <= width; x += gridSize) {
-            ctx.moveTo(x, 0); ctx.lineTo(x, height);
-        }
-        for (let y = (height % gridSize)/2; y <= height; y += gridSize) {
-            ctx.moveTo(0, y); ctx.lineTo(width, y);
+        // 仅在文本区域画横线
+        const gridPadding = layoutObj.lineHeight / 2;
+        for (let y = layoutObj.startY - gridPadding; y <= layoutObj.startY + layoutObj.boxHeight + gridPadding; y += layoutObj.lineHeight) {
+            ctx.moveTo(layoutObj.startX - 10, y); 
+            ctx.lineTo(layoutObj.startX + layoutObj.boxWidth + 10, y);
         }
         ctx.stroke();
 
-        // 3. 绘制居中文字
-        ctx.fillStyle = inkColor;
-        // 关键：使用打字机等宽字体
-        ctx.font = `bold 20px "Courier New", "Courier", "PingFang SC", monospace`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
+        // 3. 绘制文字 (参考图风格的墨蓝色)
+        ctx.font = `500 ${layoutObj.fontSize}px "Courier New", "Source Han Serif CN", "Hiragino Mincho Pro", serif`;
+        ctx.fillStyle = "#3b5bdb"; // 打字机蓝色
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
 
-        for (let j = 0; j < charCount; j++) {
-            const col = j % maxCharsPerLine;
-            const row = Math.floor(j / maxCharsPerLine);
-
-            const tx = startX + col * gridSize + gridSize / 2;
-            const ty = startY + row * gridSize + gridSize / 2;
-
-            ctx.fillText(textContent[j], tx, ty);
-        }
+        layoutObj.lines.forEach((line, index) => {
+            const rowY = layoutObj.startY + index * layoutObj.lineHeight;
+            ctx.globalAlpha = 0.85; // 微微通透的墨水感
+            ctx.fillText(line, layoutObj.startX, rowY);
+        });
+        
         ctx.restore();
 
-        // 4. 边缘细细的红线
-        ctx.strokeStyle = "rgba(220, 20, 60, 0.5)";
-        ctx.lineWidth = 1;
+        // 4. 碎片边缘
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.04)";
         ctx.stroke(path);
 
         ctx.restore();
     }
+    requestAnimationFrame(draw);
 }
 
+// 交互
 canvas.addEventListener('mousedown', (e) => {
-    points.push([e.clientX, e.clientY]);
-    generateOffsets();
-    draw();
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    points.push([x, y]);
+    chunkOffsets.push({ x: 0, y: 0, r: 0 });
+    
+    // 给所有碎片一个随机的冲击力
+    velocities.push({
+        vx: (Math.random() - 0.5) * 12, 
+        vy: (Math.random() - 0.5) * 12,
+        vr: (Math.random() - 0.5) * 0.03
+    });
 });
 
+canvas.addEventListener('dblclick', resetData);
+
+// 窗口尺寸改变时重新计算排版
 window.addEventListener('resize', init);
+
+// 启动
 init();
+draw();
 </script>
 </body>
 </html>
